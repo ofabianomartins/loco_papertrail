@@ -54,6 +54,7 @@ macro_rules! define_audition_method {
 
                     let entity_id_val = self.$attr_id.clone().unwrap();
 
+
                     if insert {
                         // Log INSERT
                         let active_model = $version_namespace::ActiveModel {
@@ -63,10 +64,9 @@ macro_rules! define_audition_method {
                              operation: sea_orm::Set("create".to_string()),
                              old_data: sea_orm::Set(None),
                              new_data: sea_orm::Set(Some(new_data)),
-                             created_at: sea_orm::NotSet,
-                             updated_at: sea_orm::NotSet,
+                             created_at: sea_orm::Set(chrono::Utc::now().into()),
                         };
-
+                        
                         let _ = active_model.insert(db).await;
                     } else {
                         // Log UPDATE
@@ -84,8 +84,7 @@ macro_rules! define_audition_method {
                             operation: sea_orm::Set("update".to_string()),
                             old_data: sea_orm::Set(Some(old_data)),
                             new_data: sea_orm::Set(Some(new_data)),
-                            created_at: sea_orm::NotSet,
-                            updated_at: sea_orm::NotSet,
+                            created_at: sea_orm::Set(chrono::Utc::now().into()),
                         };
 
                         let _ = active_model.insert(db).await;
@@ -120,8 +119,7 @@ macro_rules! define_audition_method {
                         operation: sea_orm::Set("delete".to_string()),
                         old_data: sea_orm::Set(Some(old_data)),
                         new_data: sea_orm::Set(None),
-                        created_at: sea_orm::NotSet,
-                        updated_at: sea_orm::NotSet,
+                        created_at: sea_orm::Set(chrono::Utc::now().into()),
                     };
 
                     let _ = active_model.insert(db).await;
@@ -147,7 +145,7 @@ mod audition_tests {
         Schema,
         ActiveModelBehavior,
         ConnectionTrait,
-        prelude::*
+        entity::prelude::*
     };
     use uuid::Uuid;
     use loco_factory::define_factory;
@@ -160,7 +158,6 @@ mod audition_tests {
         #[sea_orm(table_name = "versions")] // Dummy table name
         pub struct Model {
             pub created_at: DateTimeWithTimeZone,
-            pub updated_at: DateTimeWithTimeZone,
             #[sea_orm(primary_key)]
             pub id: i32,
             pub entity_name: String,
@@ -179,13 +176,10 @@ mod audition_tests {
     pub mod specialties {
         use super::*;
         use serde_json::Value as Json;
-        use std::convert::TryFrom;
 
-        #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
+        #[derive(Clone, Debug, PartialEq, Default, DeriveEntityModel, Eq, Serialize, Deserialize)]
         #[sea_orm(table_name = "specialties")]
         pub struct Model {
-            pub created_at: chrono::DateTime<chrono::Utc>,
-            pub updated_at: chrono::DateTime<chrono::Utc>,
             #[sea_orm(primary_key)]
             pub id: i32,
             #[sea_orm(unique)]
@@ -200,13 +194,13 @@ mod audition_tests {
 
         define_audition_method!(specialties, {version_model: versions, attr_id: id });
 
+        #[async_trait::async_trait]
         impl ActiveModelBehavior for ActiveModel {
-
             async fn before_save<C>(self, db: &C, insert: bool) -> std::result::Result<Self, DbErr>
             where
                 C: ConnectionTrait,
             {
-                self.before_update_audition(db, insert).await;
+                self.before_update_audition(db, insert).await?;
 
                 Ok(self)
             }
@@ -215,12 +209,10 @@ mod audition_tests {
             where
                 C: ConnectionTrait,
             {
-                self.before_delete_audition(db).await;
+                self.before_delete_audition(db).await?;
 
                 Ok(self)
             }
-
-
         }
     }
 
@@ -251,6 +243,7 @@ mod audition_tests {
         specialty => specialties::Model {
             active_model: specialties::ActiveModel,
             fields: {
+                id: i32 = 1,
                 name: String = "Test Specialty".to_string(),
                 description: Option<String> = Some("Test Description".to_string()),
                 uuid: Uuid = Uuid::new_v4(),
@@ -264,28 +257,55 @@ mod audition_tests {
     // TESTES - BUILDER PATTERN
     // ============================================
 
-    mod builder_factory_tests {
+    mod create_new_log_on_audition_tests {
         use super::*;
-        #[tokio::test]
-        async fn test_builder_with_default_values() {
-            let db = setup_test_db().await;
-            let specialty = CreateSpecialtyBuilder::new().create(&db).await.unwrap();
+        use sea_orm::IntoActiveModel;
 
-            assert_eq!(specialty.name, "Test Specialty");
-            assert_eq!(specialty.description, Some("Test Description".to_string()));
+        #[tokio::test]
+        async fn test_count_on_creation_of_model() {
+            let db = setup_test_db().await;
+            let _ = create_specialty(&db).await.unwrap();
+
+            let count_all = versions::Entity::find()
+                    .count(&db)
+                    .await;
+
+            let count = versions::Entity::find()
+                    .filter(versions::Column::Operation.eq("create".to_string()))
+                    .count(&db)
+                    .await;
+
+            assert_eq!(count_all, Ok(1));
+            assert_eq!(count, Ok(1));
         }
 
         #[tokio::test]
-        async fn test_builder_with_custom_name() {
+        async fn test_count_on_update_of_model() {
             let db = setup_test_db().await;
+            let specialty = create_specialty(&db).await.unwrap();
 
-            let specialty = CreateSpecialtyBuilder::new()
-                .name("Cardiology".to_string())
-                .create(&db)
-                .await
-                .unwrap();
+            let mut active_specialty = specialty.into_active_model();
 
-            assert_eq!(specialty.name, "Cardiology");
+            active_specialty.name = sea_orm::Set("Specialty2".to_string());
+            let _ = active_specialty.update(&db).await;
+
+            let count_all = versions::Entity::find()
+                    .count(&db)
+                    .await;
+
+            let count_create = versions::Entity::find()
+                    .filter(versions::Column::Operation.eq("create".to_string()))
+                    .count(&db)
+                    .await;
+
+            let count_update = versions::Entity::find()
+                    .filter(versions::Column::Operation.eq("update".to_string()))
+                    .count(&db)
+                    .await;
+
+            assert_eq!(count_all, Ok(2));
+            assert_eq!(count_create, Ok(1));
+            assert_eq!(count_update, Ok(1));
         }
     }
 
