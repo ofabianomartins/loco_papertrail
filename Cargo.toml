@@ -1,0 +1,25 @@
+[package]
+name = "sea_orm_papertrail"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+syn = "2"
+quote = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1" }
+sea-orm = { version = "1.1", features = [
+  "debug-print",
+  "sqlx-sqlite",
+  "sqlx-postgres",
+  "runtime-tokio-rustls",
+  "macros",
+] }
+paste = "1.0.15"
+chrono = "0.4.42"
+uuid = { version = "1.18.1", features = ["v4"] }
+tokio = { version = "1.45", default-features = false, features = ["rt-multi-thread", "test-util", "full"] }
+
+[dev-dependencies]
+loco-factory = "0.1.0"
+
