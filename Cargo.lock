@@ -879,6 +879,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "loco-papertrail"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "loco-factory",
+ "paste",
+ "quote",
+ "sea-orm",
+ "serde",
+ "serde_json",
+ "syn 2.0.111",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "log"
 version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1493,22 +1509,6 @@ dependencies = [
  "serde_json",
  "sqlx",
  "time",
- "uuid",
-]
-
-[[package]]
-name = "sea_orm_papertrail"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "loco-factory",
- "paste",
- "quote",
- "sea-orm",
- "serde",
- "serde_json",
- "syn 2.0.111",
- "tokio",
  "uuid",
 ]
 

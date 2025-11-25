@@ -1,7 +1,11 @@
 [package]
-name = "sea_orm_papertrail"
+name = "loco-papertrail"
 version = "0.1.0"
 edition = "2024"
+description = "It's a change data tracker to sea_orm"
+authors = ["Fabiano Martins <fabiano.paula.martins@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/ofabianomartins/loco_papertrail"
 
 [dependencies]
 syn = "2"
