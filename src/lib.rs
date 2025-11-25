@@ -11,91 +11,124 @@
 // MACRO DEFINITION
 // ============================================
 
+use sea_orm::{ ConnectionTrait, DbErr };
+
+pub trait ActiveModelAudition {
+    fn before_update_audition<C>(
+        &self,
+        db: &C,
+        insert: bool
+    ) -> impl std::future::Future<Output = std::result::Result<(), DbErr>> + Send
+    where C: ConnectionTrait;
+
+    fn before_delete_audition<C>(
+        &self,
+        db: &C
+    ) -> impl std::future::Future<Output = std::result::Result<(), DbErr>> + Send
+    where C: ConnectionTrait;
+}
+
 #[macro_export]
-macro_rules! define_audition {
+macro_rules! define_audition_method {
     (
         $(#[$meta:meta])*
         $model_namespace:ident,
         {
-            version_model: $version_namespace:path,
+            version_model: $version_namespace:ident,
             attr_id: $attr_id:ident
         }
     ) => {
         ::paste::paste! {
-            use serde_json::Value as Json;
+            use sea_orm::{ ConnectionTrait, DbErr };
 
-            #[async_trait::async_trait]
-            impl ActiveModelBehavior for $model_namespace::ActiveModel {
-
-                /// Logs **INSERT** and **UPDATE**
-                async fn before_save<C>(self, db: &C, insert: bool) -> Result<Self, DbErr>
+            impl ActiveModelAudition for ActiveModel {
+                async fn before_update_audition<C>(
+                    &self,
+                    db: &C,
+                    insert: bool
+                ) -> std::result::Result<(), DbErr>
                 where
                     C: ConnectionTrait,
                 {
-                    let new_data: Json = serde_json::to_value(&self.clone().into_model().unwrap()).unwrap();
-                    let entity_id = self.$attr_id;
+                    let new_data: Json = serde_json::to_value(&$model_namespace::Model::try_from(self.clone())?).unwrap();
+
+                    let entity_id_val = self.$attr_id.clone().unwrap();
 
                     if insert {
                         // Log INSERT
-                        let active_model = $version_namespace {
-                            entity_id: entity_id,
-                            entity_name: sea_orm::Set("$model"),
-                            operation: sea_orm::Set("create".to_string()),
-                            old_data: sea_orm::Set(None),
-                            new_data: sea_orm::Set(Some(new_data)),
+                        let active_model = $version_namespace::ActiveModel {
+                             id: sea_orm::NotSet,
+                             entity_id: sea_orm::Set(entity_id_val),
+                             entity_name: sea_orm::Set("$model".to_string()),
+                             operation: sea_orm::Set("create".to_string()),
+                             old_data: sea_orm::Set(None),
+                             new_data: sea_orm::Set(Some(new_data)),
+                             created_at: sea_orm::NotSet,
+                             updated_at: sea_orm::NotSet,
                         };
 
                         let _ = active_model.insert(db).await;
                     } else {
                         // Log UPDATE
-                        let old_model = $model_namespace::Entity::find_by_id(entity_id).one(db).await?
+                        let old_model = $model_namespace::Entity::find_by_id(entity_id_val)
+                                            .one(db)
+                                            .await?
                                             .ok_or(DbErr::RecordNotFound("Post not found".to_string()))?;
                         
                         let old_data: Json = serde_json::to_value(&old_model).unwrap();
 
-                        let active_model = $version_namespace {
-                            entity_id: entity_id,
-                            entity_name: sea_orm::Set("$model"),
+                        let active_model = $version_namespace::ActiveModel {
+                            id: sea_orm::NotSet,
+                            entity_id: sea_orm::Set(entity_id_val),
+                            entity_name: sea_orm::Set(stringify!($model_namespace).to_string()),
                             operation: sea_orm::Set("update".to_string()),
                             old_data: sea_orm::Set(Some(old_data)),
                             new_data: sea_orm::Set(Some(new_data)),
+                            created_at: sea_orm::NotSet,
+                            updated_at: sea_orm::NotSet,
                         };
 
                         let _ = active_model.insert(db).await;
                     };
 
-                    Ok(self)
+                    Ok(())
                 }
 
-                /// Logs **DELETE**
-                async fn before_delete<C>(self, db: &C) -> Result<Self, DbErr>
+                async fn before_delete_audition<C>(
+                    &self,
+                    db: &C
+                ) -> std::result::Result<(), DbErr>
                 where
                     C: ConnectionTrait,
                 {
-                    let entity_id = self.$attr_id;
+                    let entity_id_val = self.$attr_id.clone().unwrap();
                     
                     // Fetch the existing record to capture the data before deletion
-                    let old_model = $model_namespace::Entity::find_by_id(entity_id).one(db).await?
-                                         .ok_or(DbErr::RecordNotFound("Post not found".to_string()))?;
+                    let old_model = $model_namespace::Entity::find_by_id(entity_id_val)
+                                        .one(db)
+                                        .await?
+                                        .ok_or(DbErr::RecordNotFound("Post not found".to_string()))?;
                     
                     let old_data: Json = serde_json::to_value(&old_model).unwrap();
                     
                     // Log DELETE
 
-                    let active_model = $version_namespace {
-                        entity_id: entity_id,
-                        entity_name: sea_orm::Set("$model"),
+                    let active_model = $version_namespace::ActiveModel {
+                        id: sea_orm::NotSet,
+                        entity_id: sea_orm::Set(entity_id_val),
+                        entity_name: sea_orm::Set(stringify!($model_namespace).to_string()),
                         operation: sea_orm::Set("delete".to_string()),
                         old_data: sea_orm::Set(Some(old_data)),
                         new_data: sea_orm::Set(None),
+                        created_at: sea_orm::NotSet,
+                        updated_at: sea_orm::NotSet,
                     };
 
                     let _ = active_model.insert(db).await;
-                    
-                    Ok(self)
+
+                    Ok(())
                 }
             }
-
         }
     };
 }
@@ -105,23 +138,57 @@ macro_rules! define_audition {
 // ============================================
 
 #[cfg(test)]
-mod factory_tests {
+mod audition_tests {
     use super::*;
     use sea_orm::{
-        ActiveModelTrait, Database, DatabaseConnection, Schema, entity::prelude::*
+        ActiveModelTrait,
+        Database,
+        DatabaseConnection,
+        Schema,
+        ActiveModelBehavior,
+        ConnectionTrait,
+        prelude::*
     };
     use uuid::Uuid;
     use loco_factory::define_factory;
     use serde::{ Serialize, Deserialize };
 
+    pub mod versions {
+        use super::*;
+
+        #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq)]
+        #[sea_orm(table_name = "versions")] // Dummy table name
+        pub struct Model {
+            pub created_at: DateTimeWithTimeZone,
+            pub updated_at: DateTimeWithTimeZone,
+            #[sea_orm(primary_key)]
+            pub id: i32,
+            pub entity_name: String,
+            pub entity_id: i32,
+            pub operation: String,
+            pub old_data: Option<Json>,
+            pub new_data: Option<Json>,
+        }
+
+        #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
+        pub enum Relation {}
+
+        impl ActiveModelBehavior for ActiveModel {}
+    }
+
     pub mod specialties {
         use super::*;
+        use serde_json::Value as Json;
+        use std::convert::TryFrom;
 
         #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq, Serialize, Deserialize)]
         #[sea_orm(table_name = "specialties")]
         pub struct Model {
+            pub created_at: chrono::DateTime<chrono::Utc>,
+            pub updated_at: chrono::DateTime<chrono::Utc>,
             #[sea_orm(primary_key)]
             pub id: i32,
+            #[sea_orm(unique)]
             pub uuid: Uuid,
             pub name: String,
             pub description: Option<String>,
@@ -131,28 +198,32 @@ mod factory_tests {
         #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
         pub enum Relation {}
 
-    }
+        define_audition_method!(specialties, {version_model: versions, attr_id: id });
 
-    pub mod versions {
-        use super::*;
+        impl ActiveModelBehavior for ActiveModel {
 
-        #[derive(Clone, Debug, PartialEq, DeriveEntityModel, Eq)]
-        #[sea_orm(table_name = "versions")] // Dummy table name
-        pub struct Model {
-            #[sea_orm(primary_key)]
-            pub id: i32,
-            pub entity_name: String,
-            pub entity_id: String,
-            pub operation: String,
-            pub old_data: Option<Json>,
-            pub new_data: Option<Json>,
-            pub created_at: chrono::DateTime<chrono::Utc>,
+            async fn before_save<C>(self, db: &C, insert: bool) -> std::result::Result<Self, DbErr>
+            where
+                C: ConnectionTrait,
+            {
+                self.before_update_audition(db, insert).await;
+
+                Ok(self)
+            }
+
+            async fn before_delete<C>(self, db: &C) -> std::result::Result<Self, DbErr>
+            where
+                C: ConnectionTrait,
+            {
+                self.before_delete_audition(db).await;
+
+                Ok(self)
+            }
+
+
         }
-
-        #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]
-        pub enum Relation {}
-
     }
+
 
     /// Setup de banco em memória SQLite
     async fn setup_test_db() -> DatabaseConnection {
@@ -163,6 +234,11 @@ mod factory_tests {
         let schema = Schema::new(sea_orm::DatabaseBackend::Sqlite);
 
         let stmt = schema.create_table_from_entity(specialties::Entity);
+        db.execute(db.get_database_backend().build(&stmt))
+            .await
+            .expect("Failed to create specialties table");
+
+        let stmt = schema.create_table_from_entity(versions::Entity);
         db.execute(db.get_database_backend().build(&stmt))
             .await
             .expect("Failed to create specialties table");
@@ -182,8 +258,6 @@ mod factory_tests {
             }
         }
     }
-
-    define_audition!(specialties, { version_model: versions::ActiveModel, attr_id: id });
 
 
     // ============================================
